@@ -1,0 +1,259 @@
+"""拍卖行表单 UI：主菜单 → 列表/详情/出价，发起（选物品→填参数→确认托管），我的拍卖。
+
+出价输入语义：输入的是「加价额」，实际出价 = 基准价 + 加价额。
+基准价 = 当前最高价（无人出价时为起拍价）。加价额低于最低加价无效。
+"""
+
+import json
+
+from endstone.form import ActionForm, Dropdown, Label, ModalForm, TextInput, MessageForm
+
+from . import config
+from .auction_manager import STATUS_ACTIVE
+
+
+class AuctionMenus:
+    """Mixin：挂在 ARCOnlineMallPlugin 上，self 即插件实例。"""
+
+    # ---------- 主菜单 ----------
+
+    def open_auction_main(self, player) -> None:
+        if self.core_plugin() is None or self.inventory_plugin() is None:
+            form = ActionForm(title="拍卖行", content="拍卖行依赖 弧光核心 与 arc_inventory，当前不可用。")
+            form.add_button("返回", on_click=lambda p: self.open_mall_main(p))
+            player.send_form(form)
+            return
+        active = self.auction.list_active()
+        form = ActionForm(
+            title="弧光拍卖行",
+            content=f"正在进行中的拍卖：{len(active)} 场\n\n拍卖截止时按最高价强制扣款，\n余额不足将扣成负数（欠银行），出价请量力而行！",
+        )
+        form.add_button("浏览拍卖", on_click=lambda p: self.show_auction_list(p, 0))
+        form.add_button("发起拍卖", on_click=lambda p: self.show_inventory_pick(p))
+        form.add_button("我的拍卖", on_click=lambda p: self.show_my_auctions(p))
+        form.add_button("返回商城", on_click=lambda p: self.open_mall_main(p))
+        player.send_form(form)
+
+    # ---------- 浏览与出价 ----------
+
+    def show_auction_list(self, player, page: int = 0) -> None:
+        auctions = self.auction.list_active()
+        if not auctions:
+            form = ActionForm(title="拍卖行", content="当前没有进行中的拍卖。\n快输入 /om 发起第一场吧！")
+            form.add_button("返回", on_click=lambda p: self.open_auction_main(p))
+            player.send_form(form)
+            return
+
+        page_size = config.PAGE_SIZE
+        total_pages = (len(auctions) + page_size - 1) // page_size
+        page = max(0, min(page, total_pages - 1))
+        form = ActionForm(title=f"拍卖列表 {page + 1}/{total_pages}",
+                          content=f"共 {len(auctions)} 场拍卖进行中")
+        for a in auctions[page * page_size:(page + 1) * page_size]:
+            item_info = self._item_info(a)
+            price = a.get("current_price")
+            price_text = f"当前 {price:.2f}元" if price else f"起拍 {a['start_price']:.2f}元"
+            left = self.auction.remaining_text(int(a["end_time"]))
+            form.add_button(
+                f"{self.auction.item_display(item_info)}×{a['quantity']}  {price_text}  剩{left}",
+                on_click=lambda p, aid=a["id"]: self.show_auction_detail(p, aid),
+            )
+        if page > 0:
+            form.add_button("上一页", on_click=lambda p: self.show_auction_list(p, page - 1))
+        if page < total_pages - 1:
+            form.add_button("下一页", on_click=lambda p: self.show_auction_list(p, page + 1))
+        form.add_button("刷新", on_click=lambda p: self.show_auction_list(p, page))
+        form.add_button("返回", on_click=lambda p: self.open_auction_main(p))
+        player.send_form(form)
+
+    def show_auction_detail(self, player, auction_id: int) -> None:
+        a = self.auction.get_auction(auction_id)
+        if a is None or a.get("status") != STATUS_ACTIVE:
+            self.toast(player, "拍卖行", "该拍卖已结束")
+            self.show_auction_list(player, 0)
+            return
+        item_info = self._item_info(a)
+        has_bid = bool(a.get("current_bidder_xuid"))
+        base = float(a.get("current_price") or 0) or float(a.get("start_price") or 0)
+        if has_bid:
+            price_line = f"当前最高价：{a['current_price']:.2f} 元（{a['current_bidder_name']}）"
+        else:
+            price_line = "当前价：无（你将成为第一个出价者）"
+        lines = [
+            f"拍品：{self.auction.item_display(item_info)} ×{a['quantity']}",
+            f"卖家：{a.get('seller_name')}",
+            "",
+            f"起拍价：{a['start_price']:.2f} 元",
+            f"每次最低加价：{a['min_increment']:.2f} 元",
+            price_line,
+            f"距离截止：{self.auction.remaining_text(int(a['end_time']))}",
+            "",
+            f"你的出价 = 基准价 {base:.2f} + 加价额，",
+            f"加价额不能低于 {a['min_increment']:.2f} 元。",
+            "截止后按最高价强制扣款，可扣成负数（欠银行）！",
+        ]
+        form = ActionForm(title="拍卖详情", content="\n".join(lines))
+        form.add_button("我要出价", on_click=lambda p: self.show_bid_form(p, auction_id))
+        if self.xuid_of(player) == a.get("seller_xuid") and not has_bid:
+            form.add_button("取消拍卖", on_click=lambda p: self._do_cancel(p, auction_id))
+        form.add_button("刷新", on_click=lambda p: self.show_auction_detail(p, auction_id))
+        form.add_button("返回列表", on_click=lambda p: self.show_auction_list(p, 0))
+        player.send_form(form)
+
+    def show_bid_form(self, player, auction_id: int) -> None:
+        a = self.auction.get_auction(auction_id)
+        if a is None or a.get("status") != STATUS_ACTIVE or int(a["end_time"]) <= _now():
+            self.toast(player, "拍卖行", "该拍卖已结束")
+            return
+        has_bid = bool(a.get("current_bidder_xuid"))
+        base = float(a.get("current_price") or 0) or float(a.get("start_price") or 0)
+        hint = Label(text=(
+            f"竞拍 {self.auction.item_display(self._item_info(a))} ×{a['quantity']}\n"
+            f"基准价：{base:.2f} 元｜最低加价：{a['min_increment']:.2f} 元\n"
+            f"输入加价额，出价 = {base:.2f} + 加价额"))
+        inp = TextInput(label="加价额（元）", placeholder=f"不低于 {a['min_increment']:.2f}",
+                        default_value=f"{a['min_increment']:g}")
+
+        def _submit(p, json_str: str) -> None:
+            try:
+                data = json.loads(json_str)
+                increment = float(str(data[0] if isinstance(data, list) else data or "").strip())
+            except Exception:
+                self.toast(p, "出价失败", "金额格式不正确")
+                return
+            ok, result = self.auction.place_bid(p, auction_id, increment)
+            if not ok:
+                self.toast(p, "出价失败", str(result))
+                self.show_auction_detail(p, auction_id)
+                return
+            self.toast(p, "出价成功", f"你当前出价 {result:.2f} 元，截止前被超过将失去拍品")
+
+        player.send_form(ModalForm(title="参与竞拍", controls=[hint, inp], on_submit=_submit))
+
+    # ---------- 发起拍卖 ----------
+
+    def show_inventory_pick(self, player) -> None:
+        inv = self.inventory_plugin()
+        items = []
+        if inv is not None:
+            try:
+                items = list(inv.api_get_inventory_items(player) or [])
+            except Exception:
+                items = []
+        items = [it for it in items if int(it.get("count") or 0) > 0]
+        if not items:
+            form = ActionForm(title="发起拍卖", content="背包里没有可拍卖的物品。")
+            form.add_button("返回", on_click=lambda p: self.open_auction_main(p))
+            player.send_form(form)
+            return
+        form = ActionForm(title="选择拍品", content="选择要拍卖的背包物品（整组托管）")
+        for it in items:
+            label = f"{self.auction.item_display(it)} ×{it['count']}"
+            form.add_button(label, on_click=lambda p, info=dict(it): self.show_create_form(p, info))
+        form.add_button("返回", on_click=lambda p: self.open_auction_main(p))
+        player.send_form(form)
+
+    def show_create_form(self, player, item_info: dict) -> None:
+        choices = [self.auction.duration_text(m) for m in config.AUCTION_DURATION_CHOICES]
+        default_increment = self.setting_float("AUCTION_DEFAULT_INCREMENT", config.AUCTION_DEFAULT_INCREMENT)
+        min_start = self.setting_float("AUCTION_MIN_START_PRICE", config.AUCTION_MIN_START_PRICE)
+        hint = Label(text=(
+            f"拍品：{self.auction.item_display(item_info)} ×{item_info.get('count')}\n"
+            f"确认后物品立即托管，流拍或取消时退还\n起拍价不低于 {min_start:.2f} 元"))
+        start_inp = TextInput(label="起拍价（元）", placeholder=f"不低于 {min_start:g}", default_value="100")
+        incr_inp = TextInput(label="每次最低加价（元）", placeholder="例如 1000",
+                             default_value=f"{default_increment:g}")
+        dur_drop = Dropdown(label="拍卖时长", options=choices, default_index=0)
+
+        def _submit(p, json_str: str) -> None:
+            try:
+                data = json.loads(json_str)
+                start_price = float(str(data[0]).strip())
+                increment = float(str(data[1]).strip())
+                duration = config.AUCTION_DURATION_CHOICES[int(data[2])]
+            except Exception:
+                self.toast(p, "发起失败", "价格或时长格式不正确")
+                return
+            confirm = (
+                f"拍品：{self.auction.item_display(item_info)} ×{item_info.get('count')}\n"
+                f"起拍价：{start_price:.2f} 元｜每次最低加价：{increment:.2f} 元\n"
+                f"时长：{self.auction.duration_text(duration)}\n\n"
+                f"确认后物品立即从背包托管，发起后全服播报！"
+            )
+
+            def _go() -> None:
+                ok, msg = self.auction.create_auction(
+                    p, item_info, int(item_info.get("count") or 1),
+                    start_price, increment, duration)
+                if ok:
+                    self.toast(p, "拍卖已发起", "全服播报已发送，祝你拍出好价钱")
+                else:
+                    self.toast(p, "发起失败", msg)
+
+            p.send_form(MessageForm(title="确认发起拍卖", content=confirm,
+                                    button1="确认发起", button2="再想想",
+                                    on_submit=lambda s, choice: _go() if int(choice) == 0 else None))
+
+        player.send_form(ModalForm(title="发起拍卖", controls=[hint, start_inp, incr_inp, dur_drop],
+                                   on_submit=_submit))
+
+    # ---------- 我的拍卖 ----------
+
+    def show_my_auctions(self, player) -> None:
+        mine = self.auction.list_mine(self.xuid_of(player))
+        if not mine:
+            form = ActionForm(title="我的拍卖", content="你还没有发起过拍卖。")
+            form.add_button("发起拍卖", on_click=lambda p: self.show_inventory_pick(p))
+            form.add_button("返回", on_click=lambda p: self.open_auction_main(p))
+            player.send_form(form)
+            return
+        form = ActionForm(title="我的拍卖", content="进行中的拍卖可查看状态；无人出价时可取消")
+        for a in mine:
+            item_info = self._item_info(a)
+            if a.get("status") == STATUS_ACTIVE:
+                label = (f"[进行中] {self.auction.item_display(item_info)}×{a['quantity']} "
+                         f"{(a.get('current_price') or a['start_price']):.2f}元 剩"
+                         f"{self.auction.remaining_text(int(a['end_time']))}")
+            else:
+                label = f"[已结束] {self.auction.item_display(item_info)}×{a['quantity']}（{a.get('settle_note') or '已结算'}）"
+            form.add_button(label, on_click=lambda p, aid=a["id"]: self.show_my_detail(p, aid))
+        form.add_button("返回", on_click=lambda p: self.open_auction_main(p))
+        player.send_form(form)
+
+    def show_my_detail(self, player, auction_id: int) -> None:
+        a = self.auction.get_auction(auction_id)
+        if a is None:
+            self.show_my_auctions(player)
+            return
+        item_info = self._item_info(a)
+        if a.get("status") == STATUS_ACTIVE:
+            self.show_auction_detail(player, auction_id)
+            return
+        form = ActionForm(
+            title="拍卖记录",
+            content=(f"拍品：{self.auction.item_display(item_info)} ×{a['quantity']}\n"
+                     f"结果：{a.get('settle_note') or '已结算'}\n"
+                     f"买家：{a.get('current_bidder_name') or '无'}\n"
+                     f"成交价：{(a.get('current_price') or 0):.2f} 元"),
+        )
+        form.add_button("返回", on_click=lambda p: self.show_my_auctions(p))
+        player.send_form(form)
+
+    def _do_cancel(self, player, auction_id: int) -> None:
+        ok, msg = self.auction.cancel_auction(player, auction_id)
+        self.toast(player, "取消拍卖" if ok else "取消失败", msg)
+        self.show_my_auctions(player)
+
+    # ---------- 工具 ----------
+
+    @staticmethod
+    def _item_info(auction: dict) -> dict:
+        try:
+            return json.loads(auction.get("item_data") or "{}")
+        except Exception:
+            return {}
+
+
+def _now() -> int:
+    import time
+    return int(time.time())

@@ -1,0 +1,21 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "endstone_arc_online_mall"
+version = "0.1.0"
+dependencies = []
+authors = [
+    { name = "DEVILENMO", email = "DEVILENMO@gmail.com" },
+]
+description = "ARC Online Mall - 弧光网上商城：对接按钮/木牌商店的网购（距离配送费+平台手续费）与全服拍卖行（强制扣款可负债）"
+readme = "README.md"
+license = { file = "LICENSE" }
+keywords = ["endstone", "plugin", "mall", "auction", "arc"]
+
+[project.urls]
+Homepage = "https://github.com/ARC-Game-Club"
+
+[project.entry-points."endstone"]
+arc_online_mall = "endstone_arc_online_mall:ARCOnlineMallPlugin"
