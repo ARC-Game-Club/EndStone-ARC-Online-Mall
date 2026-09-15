@@ -9,7 +9,7 @@ from . import config
 from .auction_manager import AuctionManager
 from .auction_menus import AuctionMenus
 from .mall_menus import MallMenus
-from .mall_service import MallService
+from .mall_service import MallService, parse_dimension_aliases
 from .SettingManager import SettingManager
 
 
@@ -122,6 +122,7 @@ class ARCOnlineMallPlugin(Plugin, MallMenus, AuctionMenus):
         "CROSS_DIMENSION_FEE": config.CROSS_DIMENSION_FEE,
         "PLATFORM_FEE_RATE": config.PLATFORM_FEE_RATE,
         "PLATFORM_FEE_ENABLED": str(config.PLATFORM_FEE_ENABLED).lower(),
+        "DIMENSION_ALIASES": config.DIMENSION_ALIASES,
         "AUCTION_MIN_START_PRICE": config.AUCTION_MIN_START_PRICE,
         "AUCTION_MIN_INCREMENT_FLOOR": config.AUCTION_MIN_INCREMENT_FLOOR,
         "AUCTION_DEFAULT_INCREMENT": config.AUCTION_DEFAULT_INCREMENT,
@@ -260,6 +261,10 @@ class ARCOnlineMallPlugin(Plugin, MallMenus, AuctionMenus):
     def reload_settings(self) -> None:
         self.settings.Reload()
         self._seed_default_settings()
+
+    def dimension_aliases(self) -> dict[str, str]:
+        """自定义维度中文名映射（DIMENSION_ALIASES），供维度显示用。"""
+        return parse_dimension_aliases(self.setting_value("DIMENSION_ALIASES") or "")
 
     # ---------- 通用工具 ----------
 

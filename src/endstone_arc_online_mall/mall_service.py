@@ -8,6 +8,7 @@
 
 import json
 import math
+import re
 
 from . import config
 
@@ -15,6 +16,8 @@ from . import config
 # buy=收购店、barter=以物易物需要玩家本人在场，不进商城。
 SELLABLE_SHOP_TYPES = ("sell", "both")
 
+# 内置主世界/下界/末地的中文名；自定义维度不在表内，
+# 默认原样显示维度 ID，服主可在 DIMENSION_ALIASES 里起中文名。
 DIMENSION_LABELS = {
     "overworld": "主世界",
     "nether": "下界",
@@ -24,8 +27,30 @@ DIMENSION_LABELS = {
 }
 
 
-def dimension_label(name: str) -> str:
-    return DIMENSION_LABELS.get(str(name or "").lower(), str(name or "未知"))
+def parse_dimension_aliases(raw: str) -> dict[str, str]:
+    """解析 DIMENSION_ALIASES 配置：`维度ID=中文名`，分号/换行分隔。"""
+    aliases: dict[str, str] = {}
+    for part in re.split(r"[;；\n,，]", raw or ""):
+        if "=" not in part:
+            continue
+        key, _, value = part.partition("=")
+        key = key.strip().lower()
+        value = value.strip()
+        if key and value:
+            aliases[key] = value
+    return aliases
+
+
+def dimension_label(name: str, aliases: dict[str, str] | None = None) -> str:
+    text = str(name or "").strip()
+    if not text:
+        return "未知维度"
+    key = text.lower()
+    if key in DIMENSION_LABELS:
+        return DIMENSION_LABELS[key]
+    if aliases and key in aliases:
+        return aliases[key]
+    return text
 
 
 class MallService:

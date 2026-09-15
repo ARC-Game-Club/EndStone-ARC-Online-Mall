@@ -256,6 +256,21 @@ fee, cross = plugin.mall.delivery_fee(shop_nether, steve)
 assert cross and fee == 2600.0, (cross, fee)
 print("   跨维度 2000 + 距离费叠加 ok")
 
+print("\n== 3.5) 自定义维度：ID 原样显示 + 别名配置 + 跨维度费")
+from endstone_arc_online_mall.mall_service import dimension_label, parse_dimension_aliases
+assert dimension_label("myaddon:skyland") == "myaddon:skyland"          # 未配置别名 → 完整 ID
+assert dimension_label("overworld") == "主世界"
+aliases = parse_dimension_aliases("myaddon:skyland=天空岛; the_end=末地")
+assert dimension_label("MyAddon:Skyland", aliases) == "天空岛"           # 别名大小写不敏感
+assert dimension_label("overworld", aliases) == "主世界"                 # 内置名优先级不受影响
+sky_plugin = make_plugin({"arc_core": core, "arc_button_shop": btn, "arc_inventory": inv})
+sky_plugin.settings.SetSetting("DIMENSION_ALIASES", "myaddon:skyland=天空岛")
+sky_shop = diamond_shop(dimension="myaddon:skyland", x=5350)
+fee, cross = sky_plugin.mall.delivery_fee(sky_shop, steve)              # 主世界 → 自定义维度 = 跨维度
+assert cross and fee == 2600.0, (cross, fee)
+assert sky_plugin.dimension_aliases() == {"myaddon:skyland": "天空岛"}
+print("   自定义维度显示与计费 ok")
+
 print("\n== 4) 平台手续费 5% 按商品价")
 bill = plugin.mall.quote(shop, steve, 1)          # 商品 100 元
 assert bill["goods"] == 100.0 and bill["platform_fee"] == 5.0, bill

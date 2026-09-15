@@ -12,6 +12,8 @@ DELIVERY_UNIT_METERS = 1000          # [settings] 配送费计价段长（米）
 CROSS_DIMENSION_FEE = 2000.0         # [settings] 跨维度固定加收费用（元），叠加在距离费之上
 PLATFORM_FEE_RATE = 0.05             # [settings] 网购平台手续费率（按商品原价收取）
 PLATFORM_FEE_ENABLED = True          # [settings] 是否收取平台手续费
+DIMENSION_ALIASES = ""               # [settings] 自定义维度中文名：维度ID=名称，分号分隔
+                                     # 例：myaddon:skyland=天空岛;myaddon:abyss=深渊
 
 # ---------- 拍卖行 ----------
 

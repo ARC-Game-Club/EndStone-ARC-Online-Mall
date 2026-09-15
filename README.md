@@ -40,6 +40,7 @@ DELIVERY_UNIT_METERS=1000          # 计价段长（米），向上取整
 CROSS_DIMENSION_FEE=2000.0         # 跨维度固定加收（元）
 PLATFORM_FEE_RATE=0.05             # 平台手续费率
 PLATFORM_FEE_ENABLED=true          # 是否收取手续费
+DIMENSION_ALIASES=                 # 自定义维度中文名，格式：维度ID=名称，分号分隔
 AUCTION_MIN_START_PRICE=1.0        # 起拍价下限
 AUCTION_MIN_INCREMENT_FLOOR=1.0    # 最低加价下限
 AUCTION_DEFAULT_INCREMENT=1000.0   # 发起表单默认加价额
@@ -47,6 +48,14 @@ AUCTION_MIN_DURATION_MINUTES=5     # 拍卖最短时长
 AUCTION_MAX_DURATION_MINUTES=4320  # 拍卖最长时长
 AUCTION_MAX_ACTIVE_PER_PLAYER=5    # 单人同时进行拍卖上限
 ```
+
+**维度显示**：主世界/下界/末地内置中文名；自定义维度（如数据驱动附加包加的维度）自动原样显示完整维度 ID，并在详情页附上 ID 备查。想给自定义维度起中文名，配置 `DIMENSION_ALIASES` 即可，例如：
+
+```ini
+DIMENSION_ALIASES=myaddon:skyland=天空岛;myaddon:abyss=深渊
+```
+
+任意维度之间都按跨维度规则计费（距离费 + 跨维度固定费），维度判断只看维度 ID 是否一致。
 
 ## 依赖
 

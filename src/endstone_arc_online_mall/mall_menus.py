@@ -102,8 +102,8 @@ class MallMenus:
             f"店主：{shop.get('owner_name') or '系统'}"
             + ("（官方商店）" if int(shop.get("is_infinite") or 0) else ""),
             "",
-            f"商店位置：{dimension_label(str(shop.get('dimension') or ''))} "
-            f"({shop.get('x')}, {shop.get('y')}, {shop.get('z')})",
+            f"商店位置：{dimension_label(str(shop.get('dimension') or ''), self.dimension_aliases())} "
+            f"({shop.get('x')}, {shop.get('y')}, {shop.get('z')})〔{shop.get('dimension') or '未知'}〕",
             f"距离你：{self.mall.distance_text(distance, bill['cross_dimension'])}",
             "",
             f"配送费：{bill['delivery_fee']:.2f} 元"
