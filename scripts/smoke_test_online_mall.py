@@ -421,8 +421,10 @@ print(f"   共渲染 {len(forms)} 个表单 ok")
 print("\n== 15) 弧光核心主菜单按钮注册/注销三件套")
 assert plugin3._register_arc_core_menu() is True
 assert "arc_online_mall:menu" in core.registered_buttons
+icon = core.registered_buttons["arc_online_mall:menu"][3]
+assert icon == "textures/arc_core/ushop.png", icon
 plugin3.on_disable()
 assert "arc_online_mall:menu" in core.unregistered
-print("   注册/注销 ok")
+print("   注册/注销 ok（icon=textures/arc_core/ushop.png）")
 
 print("\nALL ARC-ONLINE-MALL SMOKE TESTS PASSED")

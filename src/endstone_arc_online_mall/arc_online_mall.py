@@ -32,6 +32,7 @@ class ARCOnlineMallPlugin(Plugin, MallMenus, AuctionMenus):
     ARC_CORE_MENU_BUTTON_ID = "arc_online_mall:menu"
     ARC_CORE_MENU_TEXT = "网上商城"
     ARC_CORE_MENU_PRIORITY = config.MENU_BUTTON_PRIORITY
+    ARC_CORE_MENU_ICON = "textures/arc_core/ushop.png"  # 像素风网购图标（纸箱+金币）
 
     commands = {
         "om": {
@@ -224,6 +225,7 @@ class ARCOnlineMallPlugin(Plugin, MallMenus, AuctionMenus):
                 self.ARC_CORE_MENU_TEXT,
                 self.open_mall_main,
                 priority=self.ARC_CORE_MENU_PRIORITY,
+                icon=self.ARC_CORE_MENU_ICON,
             ))
         except Exception as e:
             self.logger.warning(f"[ARCOnlineMall] 注册弧光核心主菜单按钮失败: {e}")
