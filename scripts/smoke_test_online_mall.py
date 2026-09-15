@@ -77,7 +77,7 @@ class FakeArcCore:
         self.unregistered = []
 
     def api_register_main_menu_button(self, button_id, text, on_click, priority=6, icon=None):
-        self.registered_buttons[str(button_id)] = (text, on_click, priority)
+        self.registered_buttons[str(button_id)] = (text, on_click, priority, icon)
         return True
 
     def api_unregister_main_menu_button(self, button_id):
