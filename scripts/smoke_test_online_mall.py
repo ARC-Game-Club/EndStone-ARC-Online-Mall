@@ -68,11 +68,14 @@ class FakePlayer:
 
 
 class FakeArcCore:
-    """余额按玩家名记账；decrease 不校验余额（可扣成负数），与真核心一致。"""
+    """余额按玩家名记账；decrease 不校验余额（可扣成负数），与真核心一致。
+    lands/deposits 按玩家名记账，模拟 api_get_player_total_assets 资产评估。"""
     name = "arc_core"
 
-    def __init__(self, money=None):
+    def __init__(self, money=None, lands=None, deposits=None):
         self.money = dict(money or {})
+        self.lands = dict(lands or {})
+        self.deposits = dict(deposits or {})
         self.registered_buttons = {}
         self.unregistered = []
 
@@ -87,6 +90,13 @@ class FakeArcCore:
 
     def api_get_player_money(self, player_name="", xuid=""):
         return round(float(self.money.get(player_name, 0.0)), 2)
+
+    def api_get_player_total_assets(self, player_name="", xuid=""):
+        balance = round(float(self.money.get(player_name, 0.0)), 2)
+        deposits = round(float(self.deposits.get(player_name, 0.0)), 2)
+        lands = round(float(self.lands.get(player_name, 0.0)), 2)
+        return {"balance": balance, "deposits": deposits, "lands": lands,
+                "total": round(balance + deposits + lands, 2)}
 
     def judge_if_player_has_enough_money_by_name(self, player_name, amount):
         return self.money.get(player_name, 0.0) >= amount
@@ -230,13 +240,17 @@ SWORD = {"type": "minecraft:diamond_sword", "name": "钻石剑", "count": 1, "da
          "enchants": {}, "lore": [], "nbt_b64": "abc=="}
 
 print("\n== 1) 配置种子写入 + 读取")
-core = FakeArcCore({"Steve": 100000.0, "Alex": 0.0})
+# 验资资产：Alex/Carl/Hero/Bob 现金少但有领地（不动产顶负债）；x8 一无所有
+core = FakeArcCore({"Steve": 100000.0, "Alex": 0.0},
+                   lands={"Alex": 100000.0, "Bob": 20000.0, "Hero": 1000.0,
+                          "Carl": 1000.0, "OverCommit": 5000.0})
 inv = FakeInventoryPlugin()
 btn = FakeShopPlugin("arc_button_shop", [diamond_shop()], core=core, xuid_to_name={"x1": "Steve"})
 plugin = make_plugin({"arc_core": core, "arc_button_shop": btn, "arc_inventory": inv})
 assert plugin.setting_value("DELIVERY_FEE_PER_KM") == "100.0"
 assert plugin.setting_float("DELIVERY_FEE_PER_KM", 0) == 100.0
 assert plugin.setting_bool("PLATFORM_FEE_ENABLED", False) is True
+assert plugin.setting_bool("AUCTION_ASSET_VERIFY_ENABLED", False) is True
 assert os.path.exists(plugin.settings.setting_file_path), "mall_setting.yml 未生成"
 print("   mall_setting.yml 自动生成，默认值 ok")
 
@@ -341,6 +355,8 @@ ok, msg = plugin3.auction.place_bid(bidder, aid, 2000)
 assert not ok and "最高出价者" in msg, msg
 ok, amount = plugin3.auction.place_bid(FakePlayer("Bob", "x3"), aid, 5000)
 assert ok and amount == 16000.0, (ok, amount)      # 手动加价 5000 >= 1000 有效
+ok, msg = plugin3.auction.place_bid(FakePlayer("NoAsset", "x8"), aid, 1000)
+assert not ok and "验资不足" in msg, msg            # 总资产 0，出价 17000 被验资拦截
 bids = plugin3.db.query_all("SELECT * FROM auction_bids WHERE auction_id=?", (aid,))
 assert len(bids) == 2, bids
 print("   加价规则全链 ok")
@@ -403,7 +419,7 @@ ok, msg = plugin3.auction.cancel_auction(loser, aid5)
 assert not ok and "不可取消" in msg, msg
 print("   取消规则 ok")
 
-print("\n== 14) 表单 UI 冒烟：主菜单/列表/详情/出价框默认值")
+print("\n== 14) 表单 UI 冒烟：主菜单/列表/详情/出价固定档位")
 plugin3.server.online_players = [loser]
 loser.forms.clear()
 plugin3.open_mall_main(loser)
@@ -412,11 +428,45 @@ plugin3.open_auction_main(loser)
 plugin3.show_auction_list(loser, 0)
 plugin3.show_shop_detail(loser, "arc_button_shop", 1)
 plugin3.show_bid_form(loser, aid5)
-forms = loser.forms
-# 出价输入框默认值 = 该拍卖的最低加价（aid5 最低加价 10）
-modal = [f for f in forms if type(f).__name__ == "ModalForm"][-1]
-assert modal.controls[1].default_value == "10", modal.controls[1].default_value
-print(f"   共渲染 {len(forms)} 个表单 ok")
+# 出价为固定档位：aid5 基准价 200、最低加价 10 → 1/5/10 次 = 210/250/300
+bid_form = [f for f in loser.forms
+            if type(f).__name__ == "ActionForm" and f.title == "参与竞拍"][-1]
+labels = [b[0] for b in bid_form.buttons]
+assert labels[:3] == ["加价1次：210.00 元", "加价5次：250.00 元", "加价10次：300.00 元"], labels
+# 点「加价5次」→ 确认弹窗 → 确认后按 基准200+50 落库
+bidder2 = FakePlayer("Carl", "x7")
+bid_form.buttons[1][1](bidder2)
+confirm = bidder2.forms[-1]
+assert type(confirm).__name__ == "MessageForm", type(confirm).__name__
+confirm.on_submit(bidder2, 0)
+amount = plugin3.auction.get_auction(aid5)["current_price"]
+assert abs(amount - 250) < 1e-6, amount
+# 验资：一无所有者表单显示上限 0、三档全标（超上限），点档位被拦截不弹确认框
+broke = FakePlayer("NoAsset", "x8")
+plugin3.show_bid_form(broke, aid5)
+broke_form = [f for f in broke.forms
+              if type(f).__name__ == "ActionForm" and f.title == "参与竞拍"][-1]
+assert "验资上限：0.00 元" in broke_form.content, broke_form.content
+broke_labels = [b[0] for b in broke_form.buttons]
+assert all("超上限" in l for l in broke_labels[:3]), broke_labels
+broke_form.buttons[0][1](broke)
+assert broke.toasts and broke.toasts[-1][0] == "验资不足", broke.toasts
+assert not any(type(f).__name__ == "MessageForm" for f in broke.forms), "超上限不应弹确认框"
+assert plugin3.auction.get_auction(aid5)["current_price"] == 250.0
+print(f"   共渲染 {len(loser.forms)} 个表单 ok，固定档位出价 250 ok，验资拦截 ok")
+
+print("\n== 14.5) 验资进阶：已领先的其他拍卖出价计入资产占用（防一资产多押）")
+ok, msg = plugin3.auction.create_auction(loser, dict(DIA), 1, 100, 10, 60)
+assert ok, msg
+aid6 = plugin3.db.query_one("SELECT id FROM auctions ORDER BY id DESC")["id"]
+oc = FakePlayer("OverCommit", "x6")            # 总资产 = 领地 5000
+ok, amount = plugin3.auction.place_bid(oc, aid6, 150)
+assert ok and amount == 250.0, (ok, amount)     # 领先 aid6，占用 250
+ok, msg = plugin3.auction.place_bid(oc, aid5, 4900)   # 出价 5150 + 已领先 250 = 5400 > 5000
+assert not ok and "验资不足" in msg and "已领先出价" in msg, msg
+ok, amount = plugin3.auction.place_bid(oc, aid5, 4500)  # 出价 4750 + 250 = 5000 恰好达标
+assert ok and amount == 4750.0, (ok, amount)
+print("   领先出价占用 ok")
 
 print("\n== 15) 弧光核心主菜单按钮注册/注销三件套")
 assert plugin3._register_arc_core_menu() is True

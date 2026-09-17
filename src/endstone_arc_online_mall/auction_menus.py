@@ -1,7 +1,9 @@
 """拍卖行表单 UI：主菜单 → 列表/详情/出价，发起（选物品→填参数→确认托管），我的拍卖。
 
-出价输入语义：输入的是「加价额」，实际出价 = 基准价 + 加价额。
-基准价 = 当前最高价（无人出价时为起拍价）。加价额低于最低加价无效。
+出价为固定档位：出价 = 基准价 + N × 每次最低加价，N 从 1/5/10 次中选，
+不支持自定义金额。基准价 = 当前最高价（无人出价时为起拍价）。
+出价受验资上限约束：不得超过 总资产（余额+定期存款+领地价值），
+由 AUCTION_ASSET_VERIFY_ENABLED 控制，核心过旧不支持时自动跳过验资。
 """
 
 import json
@@ -88,8 +90,9 @@ class AuctionMenus:
             price_line,
             f"距离截止：{self.auction.remaining_text(int(a['end_time']))}",
             "",
-            f"你的出价 = 基准价 {base:.2f} + 加价额，",
-            f"加价额不能低于 {a['min_increment']:.2f} 元。",
+            "出价为固定档位：基准价 + 1/5/10 次最低加价，",
+            f"即 {base + a['min_increment']:.2f} / {base + a['min_increment'] * 5:.2f} / "
+            f"{base + a['min_increment'] * 10:.2f} 元。",
             "截止后按最高价强制扣款，可扣成负数（欠银行）！",
         ]
         form = ActionForm(title="拍卖详情", content="\n".join(lines))
@@ -105,30 +108,65 @@ class AuctionMenus:
         if a is None or a.get("status") != STATUS_ACTIVE or int(a["end_time"]) <= _now():
             self.toast(player, "拍卖行", "该拍卖已结束")
             return
-        has_bid = bool(a.get("current_bidder_xuid"))
         base = float(a.get("current_price") or 0) or float(a.get("start_price") or 0)
-        hint = Label(text=(
-            f"竞拍 {self.auction.item_display(self._item_info(a))} ×{a['quantity']}\n"
-            f"基准价：{base:.2f} 元｜最低加价：{a['min_increment']:.2f} 元\n"
-            f"输入加价额，出价 = {base:.2f} + 加价额"))
-        inp = TextInput(label="加价额（元）", placeholder=f"不低于 {a['min_increment']:.2f}",
-                        default_value=f"{a['min_increment']:g}")
+        step = float(a.get("min_increment") or 0)
+        assets = self._player_assets(player)
+        cap_line = ""
+        if assets is not None:
+            cap_line = (
+                f"\n你的验资上限：{assets['total']:.2f} 元"
+                f"（余额 {assets['balance']:.2f}｜存款 {assets['deposits']:.2f}｜"
+                f"领地 {assets['lands']:.2f}）")
+        form = ActionForm(
+            title="参与竞拍",
+            content=(
+                f"竞拍 {self.auction.item_display(self._item_info(a))} ×{a['quantity']}\n"
+                f"基准价：{base:.2f} 元｜每次最低加价：{step:.2f} 元\n\n"
+                "选择加价档位（加价次数 × 最低加价）：\n"
+                "截止后按最高价强制扣款，可扣成负数（欠银行）！"
+                + cap_line
+            ),
+        )
+        for times in config.AUCTION_BID_STEP_CHOICES:
+            price = base + step * times
+            label = f"加价{times}次：{price:.2f} 元"
+            if assets is not None and price > assets["total"]:
+                label += "（超上限）"
+            form.add_button(
+                label,
+                on_click=lambda p, inc=step * times: self._confirm_bid(p, auction_id, inc))
+        form.add_button("返回详情", on_click=lambda p: self.show_auction_detail(p, auction_id))
+        player.send_form(form)
 
-        def _submit(p, json_str: str) -> None:
-            try:
-                data = json.loads(json_str)
-                increment = float(str(data[0] if isinstance(data, list) else data or "").strip())
-            except Exception:
-                self.toast(p, "出价失败", "金额格式不正确")
-                return
-            ok, result = self.auction.place_bid(p, auction_id, increment)
+    def _confirm_bid(self, player, auction_id: int, increment: float) -> None:
+        a = self.auction.get_auction(auction_id)
+        if a is None or a.get("status") != STATUS_ACTIVE or int(a["end_time"]) <= _now():
+            self.toast(player, "拍卖行", "该拍卖已结束")
+            return
+        base = float(a.get("current_price") or 0) or float(a.get("start_price") or 0)
+        assets = self._player_assets(player)
+        if assets is not None and base + increment > assets["total"]:
+            self.toast(
+                player, "验资不足",
+                f"出价 {base + increment:.2f} 元超过你的总资产 "
+                f"{assets['total']:.2f} 元（余额+存款+领地价值）")
+            return
+
+        def _go() -> None:
+            ok, result = self.auction.place_bid(player, auction_id, increment)
             if not ok:
-                self.toast(p, "出价失败", str(result))
-                self.show_auction_detail(p, auction_id)
+                self.toast(player, "出价失败", str(result))
+                self.show_auction_detail(player, auction_id)
                 return
-            self.toast(p, "出价成功", f"你当前出价 {result:.2f} 元，截止前被超过将失去拍品")
+            self.toast(player, "出价成功", f"你当前出价 {result:.2f} 元，截止前被超过将失去拍品")
 
-        player.send_form(ModalForm(title="参与竞拍", controls=[hint, inp], on_submit=_submit))
+        player.send_form(MessageForm(
+            title="确认出价",
+            content=(f"你将出价 {base + increment:.2f} 元"
+                     f"（基准 {base:.2f} + 加价 {increment:.2f}）\n"
+                     "截止后按最高价强制扣款，余额不足将扣成负数（欠银行）！"),
+            button1="确认出价", button2="再想想",
+            on_submit=lambda s, choice: _go() if int(choice) == 0 else None))
 
     # ---------- 发起拍卖 ----------
 
@@ -245,6 +283,13 @@ class AuctionMenus:
         self.show_my_auctions(player)
 
     # ---------- 工具 ----------
+
+    def _player_assets(self, player) -> dict | None:
+        """验资开启且核心支持时返回玩家资产数据（余额/存款/领地/total），否则 None。"""
+        if not self.setting_bool("AUCTION_ASSET_VERIFY_ENABLED",
+                                 config.AUCTION_ASSET_VERIFY_ENABLED):
+            return None
+        return self.core_assets(player)
 
     @staticmethod
     def _item_info(auction: dict) -> dict:

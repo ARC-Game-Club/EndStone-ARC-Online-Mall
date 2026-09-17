@@ -20,12 +20,16 @@ DIMENSION_ALIASES = ""               # [settings] 自定义维度中文名：维
 AUCTION_MIN_START_PRICE = 1.0        # [settings] 起拍价下限（元）
 AUCTION_MIN_INCREMENT_FLOOR = 1.0    # [settings] 卖家可设置的"每次最低加价"下限（元）
 AUCTION_DEFAULT_INCREMENT = 1000.0   # [settings] 发起拍卖时表单默认的最低加价（元）
+AUCTION_ASSET_VERIFY_ENABLED = True  # [settings] 拍卖验资：出价不得超过 余额+定期存款+领地价值 总资产
 AUCTION_MIN_DURATION_MINUTES = 5     # [settings] 拍卖最短时长（分钟）
 AUCTION_MAX_DURATION_MINUTES = 4320  # [settings] 拍卖最长时长（分钟），默认 3 天
 AUCTION_MAX_ACTIVE_PER_PLAYER = 5    # [settings] 单人同时进行的拍卖数量上限
 
 # 发起拍卖表单里提供的时长快捷选项（分钟）
 AUCTION_DURATION_CHOICES = [10, 30, 60, 360, 1440]
+
+# 出价表单的固定加价档位（次数），出价 = 基准价 + 次数 × 每次最低加价
+AUCTION_BID_STEP_CHOICES = [1, 5, 10]
 
 # ---------- 通用 ----------
 

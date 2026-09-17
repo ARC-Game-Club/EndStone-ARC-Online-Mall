@@ -127,6 +127,7 @@ class ARCOnlineMallPlugin(Plugin, MallMenus, AuctionMenus):
         "AUCTION_MIN_START_PRICE": config.AUCTION_MIN_START_PRICE,
         "AUCTION_MIN_INCREMENT_FLOOR": config.AUCTION_MIN_INCREMENT_FLOOR,
         "AUCTION_DEFAULT_INCREMENT": config.AUCTION_DEFAULT_INCREMENT,
+        "AUCTION_ASSET_VERIFY_ENABLED": str(config.AUCTION_ASSET_VERIFY_ENABLED).lower(),
         "AUCTION_MIN_DURATION_MINUTES": config.AUCTION_MIN_DURATION_MINUTES,
         "AUCTION_MAX_DURATION_MINUTES": config.AUCTION_MAX_DURATION_MINUTES,
         "AUCTION_MAX_ACTIVE_PER_PLAYER": config.AUCTION_MAX_ACTIVE_PER_PLAYER,
@@ -296,6 +297,28 @@ class ARCOnlineMallPlugin(Plugin, MallMenus, AuctionMenus):
             return None
         try:
             return float(core.api_get_player_money(str(getattr(player, "name", "")) or ""))
+        except Exception:
+            return None
+
+    def core_assets(self, player) -> dict | None:
+        """玩家总资产评估（余额+定期存款+领地价值）。
+
+        弧光核心过旧没有 api_get_player_total_assets 时返回 None，调用方按"不验资"处理。
+        """
+        core = self.core_plugin()
+        if core is None:
+            return None
+        fn = getattr(core, "api_get_player_total_assets", None)
+        if not callable(fn):
+            return None
+        try:
+            data = fn(str(getattr(player, "name", "")) or "") or {}
+            return {
+                "balance": float(data.get("balance") or 0),
+                "deposits": float(data.get("deposits") or 0),
+                "lands": float(data.get("lands") or 0),
+                "total": float(data.get("total") or 0),
+            }
         except Exception:
             return None
 

@@ -135,6 +135,25 @@ class AuctionManager:
             return False, f"加价低于最低加价 {min_increment:.2f} 元，出价无效"
 
         amount = self.required_bid(auction, increment)
+
+        # 验资入场：出价 + 已领先的其他拍卖出价 不得超过 总资产（余额+定期存款+领地价值），
+        # 保证结算负债有不动产兜底，也防止一资产多押
+        if self.plugin.setting_bool("AUCTION_ASSET_VERIFY_ENABLED",
+                                    config.AUCTION_ASSET_VERIFY_ENABLED):
+            assets = self.plugin.core_assets(player)
+            if assets is not None:
+                committed = self.plugin.db.query_one(
+                    "SELECT COALESCE(SUM(current_price), 0) AS s FROM auctions "
+                    "WHERE status=? AND current_bidder_xuid=?", (STATUS_ACTIVE, xuid))
+                leading = self._round_money((committed or {}).get("s"))
+                if amount + leading > assets["total"]:
+                    return False, (
+                        f"验资不足：出价 {amount:.2f} 元"
+                        + (f"（另已领先出价 {leading:.2f} 元）" if leading > 0 else "")
+                        + f"超过你的总资产 {assets['total']:.2f} 元"
+                        f"（余额 {assets['balance']:.2f}｜存款 {assets['deposits']:.2f}｜"
+                        f"领地 {assets['lands']:.2f}）")
+
         name = str(getattr(player, "name", "") or "")
         now = int(time.time())
         if not self.plugin.db.execute(
