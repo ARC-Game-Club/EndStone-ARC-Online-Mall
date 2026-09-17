@@ -32,7 +32,7 @@ class ARCOnlineMallPlugin(Plugin, MallMenus, AuctionMenus):
     ARC_CORE_MENU_BUTTON_ID = "arc_online_mall:menu"
     ARC_CORE_MENU_TEXT = "网上商城"
     ARC_CORE_MENU_PRIORITY = config.MENU_BUTTON_PRIORITY
-    ARC_CORE_MENU_ICON = "textures/arc_core/ushop.png"  # 像素风网购图标（纸箱+金币）
+    ARC_CORE_MENU_ICON = "textures/arc_core/online_mall.png"  # 像素风网购图标（纸箱+金币）
 
     commands = {
         "om": {
