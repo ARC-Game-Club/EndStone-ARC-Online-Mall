@@ -295,6 +295,13 @@ class AuctionManager:
             (xuid, STATUS_ACTIVE, STATUS_SETTLED))
         return [dict(r) for r in rows]
 
+    def list_bought(self, xuid: str) -> list[dict]:
+        """买家视角：正在领先出价的（active 且我是当前最高出价）+ 已拍得的（settled 且我是赢家）。"""
+        rows = self.plugin.db.query_all(
+            "SELECT * FROM auctions WHERE current_bidder_xuid=? AND status IN (?,?) ORDER BY id DESC LIMIT 30",
+            (xuid, STATUS_ACTIVE, STATUS_SETTLED))
+        return [dict(r) for r in rows]
+
     # ---------- 发货与离线补发 ----------
 
     def _deliver_return(self, xuid, name, item_info: dict, reason: str) -> None:
