@@ -7,6 +7,7 @@
 """
 
 import json
+from datetime import datetime
 
 from endstone.form import ActionForm, Dropdown, Label, ModalForm, Slider, TextInput, MessageForm
 
@@ -121,14 +122,19 @@ class AuctionMenus:
             price_line = f"当前最高价：{a['current_price']:.2f} 元（{a['current_bidder_name']}）"
         else:
             price_line = "当前价：无（你将成为第一个出价者）"
+        end_abs = datetime.fromtimestamp(int(a["end_time"])).strftime("%Y-%m-%d %H:%M")
+        created_abs = datetime.fromtimestamp(int(a.get("created_time") or 0)).strftime("%Y-%m-%d %H:%M")
         lines = [
             f"拍品：{self.auction.item_display(item_info)} ×{a['quantity']}",
+            *self._item_summary_lines(item_info),
             f"卖家：{a.get('seller_name')}",
             "",
             f"起拍价：{a['start_price']:.2f} 元",
             f"每次最低加价：{a['min_increment']:.2f} 元",
             price_line,
             f"距离截止：{self.auction.remaining_text(int(a['end_time']))}",
+            f"截止时间：{end_abs}（剩余不足5分钟时有人出价自动顺延1分钟）",
+            f"上架时间：{created_abs}",
             "",
             "出价为固定档位：基准价 + 1/5/10 次最低加价，",
             f"即 {base + a['min_increment']:.2f} / {base + a['min_increment'] * 5:.2f} / "
@@ -284,28 +290,73 @@ class AuctionMenus:
                                    controls=[hint, start_inp, incr_inp, dur_drop, qty_slider],
                                    on_submit=_submit))
 
-    # ---------- 我的拍卖 ----------
+    # ---------- 我的拍卖（购入 / 卖出） ----------
 
     def show_my_auctions(self, player) -> None:
-        mine = self.auction.list_mine(self.xuid_of(player))
-        if not mine:
-            form = ActionForm(title="我的拍卖", content="你还没有发起过拍卖。")
-            form.add_button("发起拍卖", on_click=lambda p: self.show_inventory_pick(p))
-            form.add_button("返回", on_click=lambda p: self.open_auction_main(p))
-            player.send_form(form)
-            return
-        form = ActionForm(title="我的拍卖", content="进行中的拍卖可查看状态；无人出价时可取消")
-        for a in mine:
-            item_info = self._item_info(a)
-            if a.get("status") == STATUS_ACTIVE:
-                label = (f"[进行中] {self.auction.item_display(item_info)}×{a['quantity']} "
-                         f"{(a.get('current_price') or a['start_price']):.2f}元 剩"
-                         f"{self.auction.remaining_text(int(a['end_time']))}")
-            else:
-                label = f"[已结束] {self.auction.item_display(item_info)}×{a['quantity']}（{a.get('settle_note') or '已结算'}）"
-            form.add_button(label, on_click=lambda p, aid=a["id"]: self.show_my_detail(p, aid))
+        form = ActionForm(title="我的拍卖", content="选择要查看的分类，两个列表都支持模糊搜索")
+        form.add_button("拍卖行购入（我领先/拍得）", on_click=lambda p: self.show_my_list(p, "buy", 0, ""))
+        form.add_button("拍卖行卖出（我发起的）", on_click=lambda p: self.show_my_list(p, "sell", 0, ""))
+        form.add_button("发起拍卖", on_click=lambda p: self.show_inventory_pick(p))
         form.add_button("返回", on_click=lambda p: self.open_auction_main(p))
         player.send_form(form)
+
+    def show_my_list(self, player, role: str, page: int = 0, keyword: str = "") -> None:
+        xuid = self.xuid_of(player)
+        rows = self.auction.list_bought(xuid) if role == "buy" else self.auction.list_mine(xuid)
+        if keyword:
+            rows = [a for a in rows if self._auction_matches(a, keyword)]
+        title = "拍卖行购入" if role == "buy" else "拍卖行卖出"
+        if not rows:
+            empty_msg = (f"没有匹配「{keyword}」的记录。" if keyword else
+                         "还没有相关记录。\n购入 = 你正在领先出价或已拍得的拍卖\n卖出 = 你发起的拍卖")
+            form = ActionForm(title=title, content=empty_msg)
+            form.add_button("重新搜索", on_click=lambda p: self.show_my_search(p, role))
+            form.add_button("返回", on_click=lambda p: self.show_my_auctions(p))
+            player.send_form(form)
+            return
+
+        page_size = config.PAGE_SIZE
+        total_pages = (len(rows) + page_size - 1) // page_size
+        page = max(0, min(page, total_pages - 1))
+        head = f"共 {len(rows)} 条" + (f"（关键字：{keyword}）" if keyword else "")
+        form = ActionForm(title=f"{title} {page + 1}/{total_pages}", content=head)
+        for a in rows[page * page_size:(page + 1) * page_size]:
+            item_info = self._item_info(a)
+            display = self.auction.item_display(item_info)
+            if a.get("status") == STATUS_ACTIVE:
+                tag = "[领先中]" if role == "buy" else "[进行中]"
+                label = (f"{tag} {display}×{a['quantity']} "
+                         f"{(a.get('current_price') or a['start_price']):.2f}元 剩"
+                         f"{self.auction.remaining_text(int(a['end_time']))}")
+            elif role == "buy":
+                label = f"[已拍得] {display}×{a['quantity']}（{a.get('settle_note') or '已结算'}）"
+            else:
+                label = f"[已结束] {display}×{a['quantity']}（{a.get('settle_note') or '已结算'}）"
+            form.add_button(label, on_click=lambda p, aid=a["id"]: self.show_my_detail(p, aid))
+        if page > 0:
+            form.add_button("上一页", on_click=lambda p: self.show_my_list(p, role, page - 1, keyword))
+        if page < total_pages - 1:
+            form.add_button("下一页", on_click=lambda p: self.show_my_list(p, role, page + 1, keyword))
+        form.add_button("搜索", on_click=lambda p: self.show_my_search(p, role))
+        form.add_button("返回", on_click=lambda p: self.show_my_auctions(p))
+        player.send_form(form)
+
+    def show_my_search(self, player, role: str) -> None:
+        title = "拍卖行购入" if role == "buy" else "拍卖行卖出"
+        hint = Label(text="输入关键字模糊搜索（拍品名/物品ID/对手方玩家名）")
+        inp = TextInput(label="关键字", placeholder="例如：石、钻石、shulker", default_value="")
+
+        def _submit(p, json_str: str) -> None:
+            try:
+                data = json.loads(json_str)
+            except Exception:
+                return
+            # ModalForm 返回数组中 Label 提示控件占第 0 位（null），输入值从下标 1 开始
+            keyword = str(data[1] if isinstance(data, list) and len(data) > 1
+                          else (data if not isinstance(data, list) else "") or "").strip()
+            self.show_my_list(p, role, 0, keyword)
+
+        player.send_form(ModalForm(title=f"搜索·{title}", controls=[hint, inp], on_submit=_submit))
 
     def show_my_detail(self, player, auction_id: int) -> None:
         a = self.auction.get_auction(auction_id)
@@ -316,12 +367,20 @@ class AuctionMenus:
         if a.get("status") == STATUS_ACTIVE:
             self.show_auction_detail(player, auction_id)
             return
+        created = datetime.fromtimestamp(int(a.get("created_time") or 0)).strftime("%Y-%m-%d %H:%M")
+        dealt = datetime.fromtimestamp(int(a.get("end_time") or 0)).strftime("%Y-%m-%d %H:%M")
         form = ActionForm(
             title="拍卖记录",
-            content=(f"拍品：{self.auction.item_display(item_info)} ×{a['quantity']}\n"
-                     f"结果：{a.get('settle_note') or '已结算'}\n"
-                     f"买家：{a.get('current_bidder_name') or '无'}\n"
-                     f"成交价：{(a.get('current_price') or 0):.2f} 元"),
+            content="\n".join([
+                f"拍品：{self.auction.item_display(item_info)} ×{a['quantity']}",
+                *self._item_summary_lines(item_info),
+                f"结果：{a.get('settle_note') or '已结算'}",
+                f"买家：{a.get('current_bidder_name') or '无'}",
+                f"成交价：{(a.get('current_price') or 0):.2f} 元",
+                "",
+                f"上架时间：{created}",
+                f"交易时间：{dealt}",
+            ]),
         )
         form.add_button("返回", on_click=lambda p: self.show_my_auctions(p))
         player.send_form(form)
@@ -332,6 +391,17 @@ class AuctionMenus:
         self.show_my_auctions(player)
 
     # ---------- 工具 ----------
+
+    def _item_summary_lines(self, item_info: dict) -> list:
+        """NBT 内容物/附魔中文摘要（arc_inventory ≥ 0.2.1 提供；缺失或异常时静默跳过）。"""
+        inv = self.inventory_plugin()
+        fn = getattr(inv, "api_summarize_item", None)
+        if not callable(fn):
+            return []
+        try:
+            return list(fn(item_info) or [])
+        except Exception:
+            return []
 
     def _player_assets(self, player) -> dict | None:
         """验资开启且核心支持时返回玩家资产数据（余额/存款/领地/total），否则 None。"""
